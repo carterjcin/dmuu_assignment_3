@@ -1,0 +1,412 @@
+---
+title: "AstraSync AI/ML Contract Decision"
+author: "Carter Cingrani"
+format:
+  dashboard:
+    orientation: rows
+    theme: cosmo
+    include-in-header:
+      text: |
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+        <style>
+          :root { --accent: #0066FF; --ink: #0B1F3A; --text: #334155; --muted: #64748B; --bg: #F5F7FA; --line: #E2E8F0; }
+          body, .quarto-dashboard-content, .page-layout-custom { background-color: var(--bg) !important; color: var(--text); font-family: 'Inter', sans-serif; }
+          .navbar { background-color: #FFFFFF !important; border-bottom: 1px solid var(--line); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); }
+          .navbar-title, .navbar .nav-link { font-family: 'Space Grotesk', sans-serif; text-transform: uppercase; letter-spacing: 0.1em; }
+          .navbar-title { font-weight: 700; color: var(--ink) !important; }
+          .navbar .navbar-subtitle, .navbar .navbar-author { color: var(--muted) !important; }
+          .navbar .nav-link { color: var(--muted) !important; font-size: 0.85rem; }
+          .navbar .nav-link.active, .navbar .nav-link:hover { color: var(--accent) !important; background: transparent !important; box-shadow: inset 0 -2px 0 var(--accent); }
+          .card:not(.bslib-value-box) { background-color: #FFFFFF !important; border: 1px solid var(--line) !important; border-radius: 10px; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); }
+          .card:not(.bslib-value-box) .card-header { background-color: transparent !important; border-bottom: 1px solid var(--line) !important; font-family: 'Space Grotesk', sans-serif; text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.8rem; color: var(--accent) !important; }
+          .card-body { color: var(--text); }
+          .card-body strong { color: var(--ink); }
+          .bslib-value-box { border-radius: 10px !important; border: 1px solid var(--line) !important; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); }
+          .bslib-value-box.bg-primary { background: linear-gradient(135deg, #0066FF 0%, #3D8BFF 100%) !important; color: #FFFFFF !important; border: none !important; }
+          .bslib-value-box.bg-primary *, .bslib-value-box.bg-primary .value-box-title, .bslib-value-box.bg-primary .value-box-value, .bslib-value-box.bg-primary .value-box-showcase { color: #FFFFFF !important; }
+          .bslib-value-box.bg-light { background-color: #FFFFFF !important; color: var(--ink) !important; }
+          .bslib-value-box.bg-light .value-box-showcase { color: var(--muted); }
+          .bslib-value-box .value-box-title { font-family: 'Space Grotesk', sans-serif; text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.85rem; }
+          .bslib-value-box .value-box-value { font-family: 'Space Grotesk', sans-serif; font-weight: 700; }
+          .card-body table { color: var(--text); }
+          .card-body table th { color: var(--accent); font-family: 'Space Grotesk', sans-serif; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.8rem; border-bottom: 2px solid var(--accent) !important; }
+          .card-body table td { border-color: var(--line) !important; }
+        </style>
+execute:
+  echo: false
+  warning: false
+---
+
+```{r}
+#| include: false
+library(tibble)
+library(dplyr)
+library(ggplot2)
+options(scipen = 999)
+
+usd <- function(x) paste0("$", format(round(x), big.mark = ","))
+
+# Dark technology theme for all charts
+accent <- "#0066FF"   # electric blue (recommended option / highlights)
+warm   <- "#FF7A45"   # orange (second series)
+muted  <- "#94A3B8"   # slate gray (third series)
+panel  <- "#FFFFFF"
+gridln <- "#E2E8F0"
+
+theme_tech <- function(base_size = 14) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      plot.background   = element_rect(fill = panel, color = NA),
+      panel.background  = element_rect(fill = panel, color = NA),
+      panel.grid.major  = element_line(color = gridln),
+      panel.grid.minor  = element_blank(),
+      text              = element_text(color = "#334155"),
+      axis.text         = element_text(color = "#64748B"),
+      plot.title        = element_text(color = "#0B1F3A", face = "bold"),
+      plot.subtitle     = element_text(color = "#64748B"),
+      legend.background = element_rect(fill = panel, color = NA),
+      legend.key        = element_rect(fill = panel, color = NA),
+      legend.text       = element_text(color = "#334155")
+    )
+}
+
+# ---- Inputs ----
+months     <- 18
+rate       <- 0.015
+cost       <- 1200 * 100          # $120,000 per month
+p_bonus    <- 0.7
+p_win      <- 0.4
+bonus      <- 800000
+bid        <- 150000
+
+annuity_factor  <- (1 - (1 + rate)^-months) / rate
+discount_factor <- (1 + rate)^-months
+
+# ---- Original proposal ----
+ev_original <- (160000 - cost) * annuity_factor
+
+# ---- Option A: $152K per month ----
+ev_a <- (152000 - cost) * annuity_factor
+
+# ---- Option B: $125K per month + $800K bonus ----
+b_monthly  <- (125000 - cost) * annuity_factor
+b_bonus_pv <- bonus * discount_factor
+b_success  <- b_monthly + b_bonus_pv
+b_fail     <- b_monthly
+ev_b       <- p_bonus * b_success + (1 - p_bonus) * b_fail
+
+# ---- Option C: RFP, bid $150K per month + gain-share ----
+set.seed(15)
+n_sims <- 10000
+
+triangle <- function(n, low, mode, high) {
+  u  <- runif(n)
+  Fc <- (mode - low) / (high - low)
+  ifelse(u < Fc,
+         low + sqrt(u * (high - low) * (mode - low)),
+         high - sqrt((1 - u) * (high - low) * (high - mode)))
+}
+
+sim <- tibble(savings = triangle(n_sims, low = 3.2e6, mode = 5.6e6, high = 12.8e6)) %>%
+  mutate(share = case_when(
+    savings < 4e6 ~ 0,
+    savings < 6e6 ~ 0.20 * (savings - 4e6),
+    savings < 8e6 ~ 4e5 + 0.40 * (savings - 6e6),
+    TRUE          ~ 1.2e6 + 0.60 * (savings - 8e6)
+  ))
+
+mean_share   <- mean(sim$share)
+median_share <- median(sim$share)
+p_zero_share <- mean(sim$share == 0)
+
+c_monthly <- (bid - cost) * annuity_factor
+c_win     <- c_monthly + mean_share * discount_factor
+ev_c      <- p_win * c_win
+
+# Gain-share tiers (for the decision tree)
+tiers <- sim %>%
+  mutate(tier = case_when(
+    savings < 4e6 ~ "< $4M",
+    savings < 6e6 ~ "$4M-6M",
+    savings < 8e6 ~ "$6M-8M",
+    TRUE          ~ "> $8M"
+  )) %>%
+  group_by(tier) %>%
+  summarise(prob = n() / n_sims,
+            payoff = c_monthly + mean(share) * discount_factor)
+
+tier_prob   <- setNames(tiers$prob, tiers$tier)
+tier_payoff <- setNames(tiers$payoff, tiers$tier)
+
+# Break-even probabilities (used in the sensitivity analysis)
+breakeven_win_vs_a   <- ev_a / c_win
+breakeven_win_vs_b   <- ev_b / c_win
+breakeven_bonus_vs_a <- (ev_a - b_fail) / b_bonus_pv
+breakeven_bonus_vs_c <- (ev_c - b_fail) / b_bonus_pv
+
+# Probabilities at which B or C would be worth at least 10% more than the guaranteed Option A
+premium          <- 0.10
+win_for_premium   <- (1 + premium) * ev_a / c_win
+bonus_for_premium <- ((1 + premium) * ev_a - b_fail) / b_bonus_pv
+```
+
+# Summary {scrolling="true"}
+
+## Row
+
+::: {.card}
+<div style="border-left: 6px solid #0066FF; background-color: #EEF4FF; border-radius: 6px; padding: 18px 26px; font-size: 1.25rem; color: #0B1F3A; box-sizing: border-box;">
+<strong style="color: #0066FF; font-family: 'Space Grotesk', sans-serif; text-transform: uppercase; letter-spacing: 0.06em;">My recommendation: Option A, accept the client's offer of $152,000 per month.</strong>
+It locks in `r usd(ev_a)` with no risk, while Options B and C add only `r usd(ev_b - ev_a)` and `r usd(ev_c - ev_a)` in expected value in exchange for a real chance of a much worse outcome.
+<ul style="margin: 12px 0 0 0; font-size: 1.05rem; color: #334155;">
+<li><strong>Lowest risk:</strong> Option A is the only alternative with a guaranteed payoff; Option B has a `r round(100 * (1 - p_bonus))`% chance of falling to `r usd(b_fail)`, and Option C has a `r round(100 * (1 - p_win))`% chance of earning nothing.</li>
+<li><strong>Small sacrifice:</strong> choosing A gives up at most `r round(100 * (max(ev_b, ev_c) / ev_a - 1), 1)`% of expected value, and the leads of B and C depend on probability estimates that sit right at their break-even points.</li>
+<li><strong>When to reconsider:</strong> B or C would be worth the risk only with stronger odds, such as a bonus probability above `r round(bonus_for_premium, 2)` or an RFP win probability above `r round(win_for_premium, 2)` (see Sensitivity).</li>
+</ul>
+</div>
+:::
+
+## Row
+
+::: {.card title="Summary"}
+AstraSync's client rejected a proposed price of $160,000 per month for an 18-month AI/ML implementation that costs AstraSync $120,000 per month to deliver, and offered two alternatives: a flat $152,000 per month (Option A) or $125,000 per month plus an $800,000 success bonus (Option B); if AstraSync declines both, the client will run an RFP (Option C) where AstraSync would bid $150,000 per month plus a gain-share of the client's savings, with a 40% chance of winning. I compared the expected present value of AstraSync's contribution under each option at a 1.5% monthly discount rate, using a decision tree and a `r format(n_sims, big.mark = ",")`-run Monte Carlo simulation of client savings to value the gain-share. The three options are nearly tied on expected value (Option C `r usd(ev_c)`, Option B `r usd(ev_b)`, Option A `r usd(ev_a)`), but they differ sharply in risk: Option B has a `r round(100 * (1 - p_bonus))`% chance of paying only `r usd(b_fail)`, and Option C has a `r round(100 * (1 - p_win))`% chance of paying nothing. **I recommend that AstraSync accept Option A, the most risk-averse choice**, because it guarantees `r usd(ev_a)` while giving up less than `r ceiling(100 * (max(ev_b, ev_c) / ev_a - 1))`% of expected value. Sensitivity analysis shows that B or C would only become worth their risk if AstraSync had stronger odds of earning the bonus or winning the RFP than it currently estimates.
+:::
+
+## Row {height=240px}
+
+```{r}
+#| content: valuebox
+#| title: "RECOMMENDED: Option A, accept $152K/month"
+list(icon = "shield-check", color = "primary", value = usd(ev_a))
+```
+
+```{r}
+#| content: valuebox
+#| title: "Option B: $125K/month + $800K bonus"
+list(icon = "trophy", color = "light", value = usd(ev_b))
+```
+
+```{r}
+#| content: valuebox
+#| title: "Option C: enter the RFP"
+list(icon = "graph-up-arrow", color = "light", value = usd(ev_c))
+```
+
+# Analysis
+
+## Row
+
+::: {.card title="Option A (recommended): equal payments of $152,000"}
+The client pays $152,000 at the end of each month for 18 months. After the $120,000 monthly cost (1,200 hours at $100), AstraSync keeps **$32,000 per month**.
+
+- PV = $32,000 × `r round(annuity_factor, 4)` (annuity factor) = **`r usd(ev_a)`**
+- There is no uncertainty: this is the guaranteed payoff, which makes Option A the **most risk-averse choice**.
+- It is `r usd(ev_original - ev_a)` below AstraSync's original proposal (`r usd(ev_original)`), but only `r usd(ev_b - ev_a)` below Option B and `r usd(ev_c - ev_a)` below Option C in expected value.
+:::
+
+::: {.card title="Option B: $125,000 per month + $800,000 bonus"}
+The monthly contribution falls to **$5,000** (PV `r usd(b_monthly)`), but an $800,000 bonus is paid at the end of month 18 if the implementation beats the client's benchmark (probability `r p_bonus`).
+
+- Bonus PV = $800,000 × `r round(discount_factor, 5)` = `r usd(b_bonus_pv)`
+- Bonus earned: `r usd(b_success)` · No bonus: `r usd(b_fail)`
+- Expected value = `r p_bonus` × `r usd(b_success)` + `r 1 - p_bonus` × `r usd(b_fail)` = **`r usd(ev_b)`**
+:::
+
+::: {.card title="Option C: compete in the RFP"}
+AstraSync bids $150,000 per month (a **$30,000** monthly contribution, PV `r usd(c_monthly)`) and earns a gain-share at month 18 based on the client's savings, which follow a triangular distribution (low $3.2M, most likely $5.6M, high $12.8M). AstraSync wins with probability `r p_win`.
+
+- Simulated mean gain-share: `r usd(mean_share)` (median `r usd(median_share)`; `r round(100 * p_zero_share, 1)`% of runs pay $0)
+- Payoff if AstraSync wins: `r usd(c_monthly)` + `r usd(mean_share)` × `r round(discount_factor, 5)` = `r usd(c_win)`
+- Expected value = `r p_win` × `r usd(c_win)` = **`r usd(ev_c)`**
+:::
+
+## Row
+
+```{r}
+#| title: "Option C: simulated gain-share of client savings"
+ggplot(sim, aes(x = share)) +
+  geom_histogram(bins = 50, boundary = 0, fill = "#B7C9E8", color = panel) +
+  geom_vline(data = tibble(stat  = c("Mean", "Median"),
+                           value = c(mean_share, median_share)),
+             aes(xintercept = value, color = stat), linewidth = 1) +
+  scale_color_manual(values = c(Mean = accent, Median = warm)) +
+  labs(
+    title    = "Option C: Simulated share of savings",
+    subtitle = paste("Number of simulations:", n_sims),
+    x = "Share of savings ($)",
+    y = "Count",
+    color = NULL
+  ) +
+  theme_tech()
+```
+
+```{r}
+#| title: "Comparison of the three alternatives"
+comparison <- tibble(
+  Option               = c("A: $152K/month", "B: $125K/month + bonus", "C: RFP at $150K/month"),
+  `Expected PV`        = usd(c(ev_a, ev_b, ev_c)),
+  `Best case`          = usd(c(ev_a, b_success, max(tier_payoff))),
+  `Worst case`         = usd(c(ev_a, b_fail, 0)),
+  `Chance of worst case` = c("0% (certain)", paste0(round(100 * (1 - p_bonus)), "%"),
+                             paste0(round(100 * (1 - p_win)), "% (lose RFP)")),
+  `Gain over A`        = c("-", usd(ev_b - ev_a), usd(ev_c - ev_a))
+) %>%
+  # Escape $ signs so Quarto doesn't render the cells as math
+  mutate(across(everything(), ~ gsub("$", "\\$", .x, fixed = TRUE)))
+knitr::kable(comparison)
+```
+
+# Illustration
+
+## Row
+
+```{r}
+#| title: "Decision tree: PV of AstraSync's contribution (1.5% monthly, 18 months)"
+#| fig-width: 11
+#| fig-height: 6.5
+
+# Node positions
+nodes <- tribble(
+  ~x,  ~y,   ~type,
+  0,   6,    "Decision",
+  3,   8.2,  "Chance",    # B: bonus?
+  3,   3.15, "Chance",    # C: win RFP?
+  5.5, 4.7,  "Chance",    # C: savings tier
+  8,   10,   "Payoff",    # A
+  8,   8.8,  "Payoff",    # B bonus
+  8,   7.6,  "Payoff",    # B no bonus
+  8,   6.2,  "Payoff",    # C tier 1
+  8,   5.2,  "Payoff",    # C tier 2
+  8,   4.2,  "Payoff",    # C tier 3
+  8,   3.2,  "Payoff",    # C tier 4
+  8,   1.6,  "Payoff"     # C lose
+)
+
+payoffs <- nodes %>%
+  filter(type == "Payoff") %>%
+  mutate(value = c(ev_a, b_success, b_fail,
+                   tier_payoff["< $4M"], tier_payoff["$4M-6M"],
+                   tier_payoff["$6M-8M"], tier_payoff["> $8M"], 0))
+
+# Branches: parent (px, py) to child (cx, cy)
+edges <- tribble(
+  ~px, ~py,  ~cx, ~cy,  ~label,                                        ~ev,                      ~best,
+  0,   6,    3,   8.2,  "b) $125K/month + bonus",                      paste("EV", usd(ev_b)),   FALSE,
+  3,   8.2,  8,   8.8,  paste0("Bonus earned (", p_bonus, ")"),        NA,                       FALSE,
+  3,   8.2,  8,   7.6,  paste0("No bonus (", 1 - p_bonus, ")"),        NA,                       FALSE,
+  3,   3.15, 5.5, 4.7,  paste0("Win RFP (", p_win, ")"),               paste("EV", usd(c_win)),  FALSE,
+  3,   3.15, 8,   1.6,  paste0("Lose RFP (", 1 - p_win, ")"),          NA,                       FALSE,
+  5.5, 4.7,  8,   6.2,  paste0("< $4M (", round(tier_prob["< $4M"], 3), ")"),   NA,           FALSE,
+  5.5, 4.7,  8,   5.2,  paste0("$4M-6M (", round(tier_prob["$4M-6M"], 3), ")"), NA,           FALSE,
+  5.5, 4.7,  8,   4.2,  paste0("$6M-8M (", round(tier_prob["$6M-8M"], 3), ")"), NA,           FALSE,
+  5.5, 4.7,  8,   3.2,  paste0("> $8M (", round(tier_prob["> $8M"], 3), ")"),   NA,           FALSE,
+  0,   6,    3,   3.15, "c) Enter RFP ($150K/mo)",                     paste("EV", usd(ev_c)),   FALSE,
+  0,   6,    8,   10,   "a) Accept $152K/month (recommended)",         "Guaranteed, no risk",    TRUE
+)
+
+ggplot() +
+  geom_segment(data = edges, aes(x = px, y = py, xend = px + 0.4, yend = py, color = best),
+               linewidth = 0.8) +
+  geom_segment(data = edges, aes(x = px + 0.4, y = py, xend = px + 0.4, yend = cy, color = best),
+               linewidth = 0.8) +
+  geom_segment(data = edges, aes(x = px + 0.4, y = cy, xend = cx, yend = cy, color = best),
+               linewidth = 0.8) +
+  geom_text(data = edges, aes(x = px + 0.5, y = cy + 0.28, label = label),
+            hjust = 0, size = 3.6, color = "#0B1F3A") +
+  geom_text(data = filter(edges, !is.na(ev)), aes(x = px + 0.5, y = cy - 0.28, label = ev),
+            hjust = 0, size = 3.3, color = "#64748B") +
+  geom_point(data = nodes, aes(x = x, y = y, shape = type, fill = type),
+             size = 6, color = "white") +
+  geom_text(data = payoffs, aes(x = x + 0.25, y = y, label = usd(value)),
+            hjust = 0, size = 3.8, color = "#0B1F3A") +
+  annotate("text", x = -0.2, y = 6, hjust = 1, size = 3.8, fontface = "bold",
+           color = accent, label = "Choose A\n(lowest risk)") +
+  scale_color_manual(values = c(`FALSE` = "#B8C2D0", `TRUE` = accent), guide = "none") +
+  scale_shape_manual(values = c(Decision = 22, Chance = 21, Payoff = 24)) +
+  scale_fill_manual(values = c(Decision = accent, Chance = warm, Payoff = muted)) +
+  coord_cartesian(xlim = c(-1.3, 9.6), ylim = c(1.2, 10.4)) +
+  labs(shape = NULL, fill = NULL,
+       caption = "Blue branch = recommended, risk-averse choice. Options B and C have slightly higher EVs but risk payoffs of $78K and $0. Gain-share tiers come from the simulation.") +
+  theme_void(base_size = 12) +
+  theme(legend.position = "bottom",
+        plot.background = element_rect(fill = panel, color = NA),
+        text = element_text(color = "#334155"),
+        plot.caption = element_text(color = "#64748B"))
+```
+
+# Sensitivity
+
+## Row
+
+```{r}
+#| title: "Probability of winning the RFP"
+p_win_grid <- seq(0.2, 0.8, by = 0.01)
+
+sens_win <- bind_rows(
+  tibble(p = p_win_grid, option = "A: $152K/month",         ev = ev_a),
+  tibble(p = p_win_grid, option = "B: $125K/month + bonus", ev = ev_b),
+  tibble(p = p_win_grid, option = "C: RFP",                 ev = p_win_grid * c_win)
+)
+
+ggplot(sens_win, aes(x = p, y = ev, color = option)) +
+  geom_line(linewidth = 1) +
+  geom_hline(yintercept = (1 + premium) * ev_a, linetype = "dotted", color = "#94A3B8") +
+  geom_vline(xintercept = p_win, linetype = "dashed", color = "#94A3B8") +
+  scale_color_manual(values = c(accent, muted, warm)) +
+  labs(title = "Expected PV vs. probability of winning the RFP",
+       subtitle = "Dashed line = base case (0.4); dotted line = 10% above guaranteed Option A",
+       x = "Probability of winning the RFP", y = "Expected PV ($)", color = NULL) +
+  theme_tech() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+#| title: "Probability of earning the bonus"
+p_bonus_grid <- seq(0.5, 1, by = 0.01)
+
+sens_bonus <- bind_rows(
+  tibble(p = p_bonus_grid, option = "A: $152K/month",         ev = ev_a),
+  tibble(p = p_bonus_grid, option = "B: $125K/month + bonus", ev = b_fail + p_bonus_grid * b_bonus_pv),
+  tibble(p = p_bonus_grid, option = "C: RFP",                 ev = ev_c)
+)
+
+ggplot(sens_bonus, aes(x = p, y = ev, color = option)) +
+  geom_line(linewidth = 1) +
+  geom_hline(yintercept = (1 + premium) * ev_a, linetype = "dotted", color = "#94A3B8") +
+  geom_vline(xintercept = p_bonus, linetype = "dashed", color = "#94A3B8") +
+  scale_color_manual(values = c(accent, muted, warm)) +
+  labs(title = "Expected PV vs. probability of earning the bonus",
+       subtitle = "Dashed line = base case (0.7); dotted line = 10% above guaranteed Option A",
+       x = "Probability of earning the bonus", y = "Expected PV ($)", color = NULL) +
+  theme_tech() +
+  theme(legend.position = "bottom")
+```
+
+## Row {height=30%}
+
+::: {.card title="What the sensitivity analysis shows"}
+The two most important inputs are the **probability of winning the RFP** and the **probability of earning the bonus**: both are judgment calls, and they decide whether Option B or C is worth giving up Option A's guaranteed `r usd(ev_a)`.
+
+- **Winning the RFP:** at the base case of 0.4, Option C is only `r usd(ev_c - ev_a)` ahead of A, and it falls behind A if the win probability drops below **`r round(breakeven_win_vs_a, 3)`**. But the gain-share has real upside: if AstraSync believed its chance of winning was **`r round(win_for_premium, 2)` or higher**, Option C would be worth at least 10% more than A, and above 0.6 it would be worth about `r usd(0.6 * c_win)`.
+- **Earning the bonus:** at the base case of 0.7, Option B is only `r usd(ev_b - ev_a)` ahead of A, and it falls behind A below **`r round(breakeven_bonus_vs_a, 3)`**. If AstraSync were confident of beating the benchmark, with a probability of **`r round(bonus_for_premium, 2)` or higher**, Option B would be worth at least 10% more than A, reaching `r usd(b_success)` at certainty.
+- **Takeaway:** at today's estimates, the extra expected value from B or C is too small to justify their risk. Stronger evidence of winning the RFP or hitting the benchmark would change that.
+:::
+
+# Conclusion
+
+## Row
+
+::: {.card title="Conclusion"}
+I recommend that AstraSync **accept Option A, the client's offer of $152,000 per month**, because it is the most risk-averse choice. It guarantees `r usd(ev_a)` in present value, while Option B (`r usd(ev_b)`) and Option C (`r usd(ev_c)`) add only `r usd(ev_b - ev_a)` and `r usd(ev_c - ev_a)` in expected value. Those small gains come with large downside: Option B has a `r round(100 * (1 - p_bonus))`% chance of paying only `r usd(b_fail)`, its $5,000 monthly margin leaves no room for cost overruns, and the bonus depends on a benchmark the client sets; Option C has a `r round(100 * (1 - p_win))`% chance of paying nothing and would open an existing client to competitors.
+
+The sensitivity analysis shows that the riskier options are not without value. Both leads sit right at their break-even points today, but if AstraSync had stronger evidence of success, with a bonus probability of at least `r round(bonus_for_premium, 2)` or an RFP win probability of at least `r round(win_for_premium, 2)`, Option B or C would offer enough extra value (10% or more above A) to justify the risk.
+
+All three options fall below the original proposal's `r usd(ev_original)`, so AstraSync gives up between `r usd(ev_original - max(ev_a, ev_b, ev_c))` and `r usd(ev_original - min(ev_a, ev_b, ev_c))` in present value whichever it chooses.
+
+**Recommended next steps:**
+
+1. Before accepting, counteroffer between $152,000 and $160,000 per month; every $1,000 per month adds about `r usd(1000 * annuity_factor)` in present value with no added risk.
+2. If the client holds at $152,000, accept Option A and secure the relationship.
+3. Revisit Option B only if the client agrees to a benchmark AstraSync is confident it can beat, pushing the bonus probability above `r round(bonus_for_premium, 2)`.
+:::
